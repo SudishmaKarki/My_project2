@@ -342,10 +342,21 @@ def evaluate_metrics_r2(
         }
     }
 
-
 def cross_validate_model_r2( m_best_r2, initial='730 days', period='180 days', horizon='365 days'):
     df_cv_r2 = cross_validation( m_best_r2, initial=initial, period=period, horizon=horizon, disable_tqdm=True)
     df_p_r2 = performance_metrics(df_cv_r2)
     return df_cv_r2, df_p_r2
 
+def forecast_future_with_model_r2(m_best_r2, days=30, freq='H', threshold_ratio=0.6):
+    future_r2 = m_best_r2.make_future_dataframe(periods=days * 24, freq=freq)
+    future_r2['hour'] = future_r2['ds'].dt.hour
+
+    forecast_future_r2 = m_best_r2.predict(future_r2)
+    forecast_future_r2['Hour'] = forecast_future_r2['ds'].dt.hour
+
+    future_hourly_avg_r2 = forecast_future_r2.groupby('Hour')['yhat'].mean()
+    threshold_r2 = threshold_ratio * future_hourly_avg_r2.max()
+    future_peak_hours_r2 = sorted([hour for hour, val in future_hourly_avg_r2.items() if val >= threshold_r2])
+
+    return forecast_future_r2, future_hourly_avg_r2, threshold_r2, future_peak_hours_r2
 
