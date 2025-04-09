@@ -218,4 +218,134 @@ def cross_validate_tuned_r1(m_best_r1, initial='730 days', period='180 days', ho
 
          ##REFINE MODEL 2 - HYPERPARAMETER TUNING WITH HOLIDAY AND HOUR REGRESSOR ##
 
+# Generate holidays dataframe for Prophet
+def prepare_holiday_df(start_year, end_year):
+    uk_holidays = holidays.UnitedKingdom(years=range(start_year, end_year + 1))
+    return pd.DataFrame({
+        'ds': list(uk_holidays.keys()),
+        'holiday': list(uk_holidays.values())
+    }).sort_values('ds').reset_index(drop=True)
+
+# Train with holidays and hour regressor + tune
+
+def tune_prophet_model_r2(train_df, test_df, holiday_df, param_grid):
+    all_params = [dict(zip(param_grid.keys(), v)) for v in product(*param_grid.values())]
+    rmse_list, mae_list, composite_scores = [], [], []
+
+    print("Hyperparameter Tuning with Holidays and External Regressor (hour):")
+    for params in all_params:
+        m_tuned_r2 = Prophet(
+            holidays=holiday_df,
+            changepoint_prior_scale=params['changepoint_prior_scale'],
+            seasonality_prior_scale=params['seasonality_prior_scale'],
+            seasonality_mode=params['seasonality_mode']
+        )
+        m_tuned_r2.add_regressor('hour')
+        m_tuned_r2.fit(train_df)
+        forecast = m_tuned_r2.predict(test_df)
+
+        rmse = np.sqrt(mean_squared_error(test_df['y'], forecast['yhat']))
+        mae = mean_absolute_error(test_df['y'], forecast['yhat'])
+        composite = rmse + mae
+
+        rmse_list.append(rmse)
+        mae_list.append(mae)
+        composite_scores.append(composite)
+
+        print(f"Params: {params} --> RMSE: {rmse:.4f}, MAE: {mae:.4f}, Composite: {composite:.4f}")
+
+    tuning_results = pd.DataFrame(all_params)
+    tuning_results['rmse'] = rmse_list
+    tuning_results['mae'] = mae_list
+    tuning_results['composite'] = composite_scores
+
+    best_params = tuning_results.loc[tuning_results['composite'].idxmin()]
+
+    m_best_r2 = Prophet(
+        holidays=holiday_df,
+        changepoint_prior_scale=best_params['changepoint_prior_scale'],
+        seasonality_prior_scale=best_params['seasonality_prior_scale'],
+        seasonality_mode=best_params['seasonality_mode']
+    )
+    m_best_r2.add_regressor('hour')
+    m_best_r2.fit(train_df)
+
+    return m_best_r2, best_params, tuning_results
+
+def forecast_with_model_r2(m_best_r2, restaurant_test_prophet):
+    restaurant_test_fcst_best_r2 = m_best_r2.predict(restaurant_test_prophet)
+    restaurant_test_fcst_best_r2['Hour'] = restaurant_test_fcst_best_r2['ds'].dt.hour
+    return restaurant_test_fcst_best_r2
+
+def select_peak_hours_r2(
+    restaurant_test_fcst_best_r2, 
+    restaurant_test_prophet, 
+    threshold_ratio=0.6
+):
+   
+    df = restaurant_test_fcst_best_r2.copy()
+    df['Hour'] = df['ds'].dt.hour
+
+    hourly_avg_best_r2 = df.groupby('Hour')['yhat'].mean()
+    threshold_best_r2 = threshold_ratio * hourly_avg_best_r2.max()
+    peak_hours_dynamic_best_r2 = sorted([hour for hour, val in hourly_avg_best_r2.items() if val >= threshold_best_r2])
+
+    tuned_peak_fcst_dynamic_best_r2 = df[df['Hour'].isin(peak_hours_dynamic_best_r2)]
+    restaurant_test_prophet_peak_dynamic_best_r2 = restaurant_test_prophet[
+        restaurant_test_prophet['ds'].dt.hour.isin(peak_hours_dynamic_best_r2)
+    ]
+
+    return (
+        peak_hours_dynamic_best_r2,
+        threshold_best_r2,
+        tuned_peak_fcst_dynamic_best_r2,
+        restaurant_test_prophet_peak_dynamic_best_r2,
+        hourly_avg_best_r2
+    )
+
+def evaluate_metrics_r2(
+    forecast_df, actual_df, customer_col='CustomerCount', threshold_ratio=0.6
+):
+
+    # Merge actuals into forecast for consistency
+    forecast = forecast_df.copy()
+    forecast['Hour'] = forecast['ds'].dt.hour
+    actual = actual_df.copy()
+
+    # --- Overall Metrics ---
+    mae_all = mean_absolute_error(actual[customer_col], forecast['yhat'])
+    rmse_all = np.sqrt(mean_squared_error(actual[customer_col], forecast['yhat']))
+    mape_all = mean_absolute_percentage_error(actual[customer_col], forecast['yhat'])
+
+    # --- Peak Hours Only ---
+    hourly_avg = forecast.groupby('Hour')['yhat'].mean()
+    threshold = threshold_ratio * hourly_avg.max()
+    peak_hours = sorted([h for h, val in hourly_avg.items() if val >= threshold])
+
+    forecast_peak = forecast[forecast['Hour'].isin(peak_hours)]
+    actual_peak = actual[actual['ds'].dt.hour.isin(peak_hours)]
+
+    mae_peak = mean_absolute_error(actual_peak[customer_col], forecast_peak['yhat'])
+    rmse_peak = np.sqrt(mean_squared_error(actual_peak[customer_col], forecast_peak['yhat']))
+    mape_peak = mean_absolute_percentage_error(actual_peak[customer_col], forecast_peak['yhat'])
+
+    return {
+        "overall": {
+            "MAE": mae_all,
+            "RMSE": rmse_all,
+            "MAPE": mape_all
+        },
+        "peak_hours": {
+            "MAE": mae_peak,
+            "RMSE": rmse_peak,
+            "MAPE": mape_peak
+        }
+    }
+
+
+def cross_validate_model_r2( m_best_r2, initial='730 days', period='180 days', horizon='365 days'):
+    df_cv_r2 = cross_validation( m_best_r2, initial=initial, period=period, horizon=horizon, disable_tqdm=True)
+    df_p_r2 = performance_metrics(df_cv_r2)
+    return df_cv_r2, df_p_r2
+
 
