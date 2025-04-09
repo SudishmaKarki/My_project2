@@ -216,5 +216,6 @@ def cross_validate_tuned_r1(m_best_r1, initial='730 days', period='180 days', ho
     df_p_r1 = performance_metrics(df_cv_r1)
     return df_cv_r1, df_p_r1
 
+         ##REFINE MODEL 2 - HYPERPARAMETER TUNING WITH HOLIDAY AND HOUR REGRESSOR ##
 
 
