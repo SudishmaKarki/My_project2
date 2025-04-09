@@ -23,34 +23,12 @@ from statsmodels.graphics.tsaplots import plot_acf, plot_pacf
 from statsmodels.stats.diagnostic import acorr_ljungbox
 
 def load_data(filepath='data/RestaurantData.csv'):
-    """
-    Loads the dataset from a CSV file while handling NA values.
-    Converts the 'Timestamp' column to datetime and sets it as the index.
-    
-    Parameters:
-        filepath (str): Path to the CSV file.
-        
-    Returns:
-        pd.DataFrame: Loaded DataFrame.
-    """
     df = pd.read_csv(filepath, na_values=['Na', '?'])
     df['Timestamp'] = pd.to_datetime(df['Timestamp'])
     df.set_index('Timestamp', inplace=True)
     return df
 
 def preprocess_data(df):
-    """
-    Preprocesses the DataFrame:
-    - Prints initial inspection info.
-    - Reindexes the DataFrame to ensure 24 points per day (hourly frequency).
-    - Interpolates missing values in 'CustomerCount'.
-    
-    Parameters:
-        df (pd.DataFrame): The DataFrame loaded by load_data().
-        
-    Returns:
-        pd.DataFrame: Preprocessed DataFrame with a complete hourly index.
-    """
     # Print the entire DataFrame (just for initial inspection)
     pd.set_option('display.max_rows', None)  # all rows
     print(df.head())
@@ -92,33 +70,15 @@ if __name__ == '__main__':
         print("\nFinal DataFrame Preview:")
         print(df_full.head())
 
+
 def split_train_test(df, split_date='2022-01-01'):
-    """
-    Splits the data into training and testing sets based on a specified date.
-
-    Parameters:
-        df (pd.DataFrame): Time-indexed dataframe.
-        split_date (str): The date to split train/test on.
-
-    Returns:
-        train_df (pd.DataFrame), test_df (pd.DataFrame)
-    """
-    train_df = df.loc[df.index < split_date].copy()
-    test_df = df.loc[df.index >= split_date].copy()
-    return train_df, test_df
+    restaurant_train = df.loc[df.index < split_date].copy()
+    restaurant_test = df.loc[df.index >= split_date].copy()
+    return restaurant_train, restaurant_test
 
 
 def generate_time_series_splits(df, n_splits=5):
-    """
-    Generator that yields train/test splits using time series cross-validation.
-
-    Parameters:
-        df (pd.DataFrame): Time-indexed dataframe.
-        n_splits (int): Number of cross-validation splits.
-
-    Yields:
-        Tuple of train_df, test_df for each fold.
-    """
+    
     df = df.sort_index()
     tss = TimeSeriesSplit(n_splits=n_splits)
     for train_idx, test_idx in tss.split(df):
