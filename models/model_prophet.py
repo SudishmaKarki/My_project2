@@ -131,7 +131,7 @@ def tune_prophet_model(train_df, test_df, param_grid):
 
     return m_best_r1, best_params, tuning_results
 
-def forecast_with_model(m_best_r1, restaurant_test_prophet):
+def forecast_with_model_r1(m_best_r1, restaurant_test_prophet):
     restaurant_test_fcst_best_r1 = m_best_r1.predict(restaurant_test_prophet)
     restaurant_test_fcst_best_r1['Hour'] = restaurant_test_fcst_best_r1['ds'].dt.hour
     return restaurant_test_fcst_best_r1
@@ -211,7 +211,7 @@ def evaluate_tuned_model_metrics(
         "mape_peak_best_r1": mape_peak_best_r1
     }
 
-def cross_validate_model(m_best_r1, initial='730 days', period='180 days', horizon='365 days'):
+def cross_validate_tuned_r1(m_best_r1, initial='730 days', period='180 days', horizon='365 days'):
     df_cv_r1 = cross_validation(m_best_r1, initial=initial, period=period, horizon=horizon, disable_tqdm=True)
     df_p_r1 = performance_metrics(df_cv_r1)
     return df_cv_r1, df_p_r1
