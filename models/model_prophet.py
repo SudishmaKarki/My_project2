@@ -22,7 +22,7 @@ from statsmodels.tsa.stattools import adfuller
 from statsmodels.graphics.tsaplots import plot_acf, plot_pacf
 from statsmodels.stats.diagnostic import acorr_ljungbox
 
-
+                         ##BASELINE MODEL##
 # Format the data for Prophet
 def prepare_prophet_data(restaurant_train, restaurant_test):
     restaurant_train_prophet = restaurant_train.reset_index().rename(columns={'Timestamp': 'ds', 'CustomerCount': 'y'})
@@ -82,3 +82,139 @@ def cross_validate_baseline(m, initial, period, horizon):
     df_cv = cross_validation(m, initial=initial, period=period, horizon=horizon, disable_tqdm=True)
     df_p = performance_metrics(df_cv)
     return df_cv, df_p
+
+                     ##REFINE MODEL - HYPERPARAMETER TUNING##
+# Model refinement using hyperparameter tuning with composite score from RMSE and MAE
+
+def tune_prophet_model(train_df, test_df, param_grid):
+    all_params = [dict(zip(param_grid.keys(), v)) for v in product(*param_grid.values())]
+    
+    rmse_list = []
+    mae_list = []
+    composite_scores = []
+
+    print("Hyperparameter Tuning (Composite = RMSE + MAE):")
+    for params in all_params:
+        m_tuned_r1 = Prophet(
+            changepoint_prior_scale=params['changepoint_prior_scale'],
+            seasonality_prior_scale=params['seasonality_prior_scale'],
+            seasonality_mode=params['seasonality_mode']
+        )
+        m_tuned_r1.fit(train_df)
+        forecast = m_tuned_r1.predict(test_df)
+
+        rmse = np.sqrt(mean_squared_error(test_df['y'], forecast['yhat']))
+        mae = mean_absolute_error(test_df['y'], forecast['yhat'])
+        composite_score = rmse + mae
+
+        rmse_list.append(rmse)
+        mae_list.append(mae)
+        composite_scores.append(composite_score)
+
+        print(f"Params: {params} --> RMSE: {rmse:.4f}, MAE: {mae:.4f}, Composite: {composite_score:.4f}")
+
+    tuning_results = pd.DataFrame(all_params)
+    tuning_results['rmse'] = rmse_list
+    tuning_results['mae'] = mae_list
+    tuning_results['composite'] = composite_scores
+
+    best_params = tuning_results.loc[tuning_results['composite'].idxmin()]
+    print("\nBest Hyperparameters based on Composite Score (RMSE + MAE):")
+    print(best_params)
+
+    m_best_r1 = Prophet(
+        changepoint_prior_scale=best_params['changepoint_prior_scale'],
+        seasonality_prior_scale=best_params['seasonality_prior_scale'],
+        seasonality_mode=best_params['seasonality_mode']
+    )
+    m_best_r1.fit(train_df)
+
+    return m_best_r1, best_params, tuning_results
+
+def forecast_with_model(m_best_r1, restaurant_test_prophet):
+    restaurant_test_fcst_best_r1 = m_best_r1.predict(restaurant_test_prophet)
+    restaurant_test_fcst_best_r1['Hour'] = restaurant_test_fcst_best_r1['ds'].dt.hour
+    return restaurant_test_fcst_best_r1
+
+
+def select_peak_hours(
+    restaurant_test_fcst_best_r1, 
+    restaurant_test_prophet, 
+    threshold_ratio=0.6
+):
+ 
+    # Copy forecast and extract Hour column
+    df = restaurant_test_fcst_best_r1.copy()
+    df['Hour'] = df['ds'].dt.hour
+
+    # Compute hourly average forecast
+    hourly_avg_best_r1 = df.groupby('Hour')['yhat'].mean()
+
+    # Calculate threshold and identify peak hours
+    threshold_best_r1 = threshold_ratio * hourly_avg_best_r1.max()
+    peak_hours_dynamic_best_r1 = sorted([hour for hour, demand in hourly_avg_best_r1.items() if demand >= threshold_best_r1])
+
+    # Filter forecast and actual test data for peak hours
+    tuned_peak_fcst_dynamic_best_r1 = df[df['Hour'].isin(peak_hours_dynamic_best_r1)]
+    restaurant_test_prophet_peak_dynamic_best_r1 = restaurant_test_prophet[
+        restaurant_test_prophet['ds'].dt.hour.isin(peak_hours_dynamic_best_r1)
+    ]
+
+    return (peak_hours_dynamic_best_r1, threshold_best_r1,
+            tuned_peak_fcst_dynamic_best_r1, restaurant_test_prophet_peak_dynamic_best_r1,
+            hourly_avg_best_r1)
+
+def evaluate_tuned_model_metrics(
+    restaurant_test,
+    restaurant_test_fcst_best_r1,
+    restaurant_test_prophet_peak_dynamic_best_r1,
+    tuned_peak_fcst_dynamic_best_r1
+):
+    # ----- Overall Metrics -----
+    mae_all_best_r1 = mean_absolute_error(
+        y_true=restaurant_test['CustomerCount'],
+        y_pred=restaurant_test_fcst_best_r1['yhat']
+    )
+    rmse_all_best_r1 = np.sqrt(mean_squared_error(
+        y_true=restaurant_test['CustomerCount'],
+        y_pred=restaurant_test_fcst_best_r1['yhat']
+    ))
+    mape_all_best_r1 = mean_absolute_percentage_error(
+        y_true=restaurant_test['CustomerCount'],
+        y_pred=restaurant_test_fcst_best_r1['yhat']
+    )
+
+    print("\nTuned Model Overall Test Data Metrics:")
+    print("MAE:", mae_all_best_r1)
+    print("RMSE:", rmse_all_best_r1)
+    print("MAPE:", mape_all_best_r1)
+
+    # ----- Peak Hours Metrics -----
+    actual_peak_best_r1 = restaurant_test_prophet_peak_dynamic_best_r1.set_index('ds')['y']
+    predicted_peak_best_r1 = tuned_peak_fcst_dynamic_best_r1.set_index('ds')['yhat']
+
+    mae_peak_best_r1 = mean_absolute_error(actual_peak_best_r1, predicted_peak_best_r1)
+    rmse_peak_best_r1 = np.sqrt(mean_squared_error(actual_peak_best_r1, predicted_peak_best_r1))
+    mape_peak_best_r1 = mean_absolute_percentage_error(actual_peak_best_r1, predicted_peak_best_r1)
+
+    print("\nTuned Model Peak Hours Metrics:")
+    print("MAE:", mae_peak_best_r1)
+    print("RMSE:", rmse_peak_best_r1)
+    print("MAPE:", mape_peak_best_r1)
+
+    return {
+        "mae_all_best_r1": mae_all_best_r1,
+        "rmse_all_best_r1": rmse_all_best_r1,
+        "mape_all_best_r1": mape_all_best_r1,
+        "mae_peak_best_r1": mae_peak_best_r1,
+        "rmse_peak_best_r1": rmse_peak_best_r1,
+        "mape_peak_best_r1": mape_peak_best_r1
+    }
+
+def cross_validate_model(m_best_r1, initial='730 days', period='180 days', horizon='365 days'):
+    df_cv_r1 = cross_validation(m_best_r1, initial=initial, period=period, horizon=horizon, disable_tqdm=True)
+    df_p_r1 = performance_metrics(df_cv_r1)
+    return df_cv_r1, df_p_r1
+
+
+
