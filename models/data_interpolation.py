@@ -91,3 +91,35 @@ if __name__ == '__main__':
     if df_full is not None:
         print("\nFinal DataFrame Preview:")
         print(df_full.head())
+
+def split_train_test(df, split_date='2022-01-01'):
+    """
+    Splits the data into training and testing sets based on a specified date.
+
+    Parameters:
+        df (pd.DataFrame): Time-indexed dataframe.
+        split_date (str): The date to split train/test on.
+
+    Returns:
+        train_df (pd.DataFrame), test_df (pd.DataFrame)
+    """
+    train_df = df.loc[df.index < split_date].copy()
+    test_df = df.loc[df.index >= split_date].copy()
+    return train_df, test_df
+
+
+def generate_time_series_splits(df, n_splits=5):
+    """
+    Generator that yields train/test splits using time series cross-validation.
+
+    Parameters:
+        df (pd.DataFrame): Time-indexed dataframe.
+        n_splits (int): Number of cross-validation splits.
+
+    Yields:
+        Tuple of train_df, test_df for each fold.
+    """
+    df = df.sort_index()
+    tss = TimeSeriesSplit(n_splits=n_splits)
+    for train_idx, test_idx in tss.split(df):
+        yield df.iloc[train_idx], df.iloc[test_idx]
