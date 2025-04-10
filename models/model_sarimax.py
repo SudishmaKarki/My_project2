@@ -370,7 +370,7 @@ def future_forecast_by_hour_sarimax_refined(forecast_df, threshold_ratio=0.6):
                                    #SARIMAX Exogenous Variables model refinement 
 
 #Exogenous Variable Preparation
-def create_exogenous_variables(train_df, test_df):
+'''def create_exogenous_variables(train_df, test_df):
     holiday_dummies_train = pd.get_dummies(train_df['Holiday'], prefix='Holiday', drop_first=False)
     holiday_dummies_test = pd.get_dummies(test_df['Holiday'], prefix='Holiday', drop_first=False)
 
@@ -380,6 +380,23 @@ def create_exogenous_variables(train_df, test_df):
 
     hour_train = train_df.index.hour.to_frame(name='hour')
     hour_test = test_df.index.hour.to_frame(name='hour')
+
+    exog_train = pd.concat([hour_train, holiday_dummies_train], axis=1)
+    exog_test = pd.concat([hour_test, holiday_dummies_test], axis=1)
+
+    return exog_train, exog_test'''
+
+def create_exogenous_variables(train_df, test_df):
+    holiday_dummies_train = pd.get_dummies(train_df['Holiday'], prefix='Holiday', drop_first=False)
+    holiday_dummies_test = pd.get_dummies(test_df['Holiday'], prefix='Holiday', drop_first=False)
+
+    all_cols = holiday_dummies_train.columns.union(holiday_dummies_test.columns)
+    holiday_dummies_train = holiday_dummies_train.reindex(columns=all_cols, fill_value=0).astype(float)
+    holiday_dummies_test = holiday_dummies_test.reindex(columns=all_cols, fill_value=0).astype(float)
+
+    # ✅ FIX: Use pd.Series with index to get hour values as a proper Series
+    hour_train = pd.Series(train_df.index.hour, index=train_df.index, name='hour')
+    hour_test = pd.Series(test_df.index.hour, index=test_df.index, name='hour')
 
     exog_train = pd.concat([hour_train, holiday_dummies_train], axis=1)
     exog_test = pd.concat([hour_test, holiday_dummies_test], axis=1)
