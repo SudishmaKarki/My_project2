@@ -216,6 +216,19 @@ def cross_validate_tuned_r1(m_best_r1, initial='730 days', period='180 days', ho
     df_p_r1 = performance_metrics(df_cv_r1)
     return df_cv_r1, df_p_r1
 
+def forecast_future_with_model_r1(m_best_r1, days=30, freq='H', threshold_ratio=0.6):
+    future_r1 = m_best_r1.make_future_dataframe(periods=days * 24, freq=freq)
+    future_r1['hour'] = future_r1['ds'].dt.hour
+
+    forecast_future_r1 = m_best_r1.predict(future_r1)
+    forecast_future_r1['Hour'] = forecast_future_r1['ds'].dt.hour
+
+    future_hourly_avg_r1 = forecast_future_r1.groupby('Hour')['yhat'].mean().round(2)
+    threshold_r1 = threshold_ratio * future_hourly_avg_r1.max()
+    future_peak_hours_r1 = sorted([h for h, v in future_hourly_avg_r1.items() if v >= threshold_r1])
+
+    return forecast_future_r1, future_hourly_avg_r1, threshold_r1, future_peak_hours_r1
+
          ##REFINE MODEL 2 - HYPERPARAMETER TUNING WITH HOLIDAY AND HOUR REGRESSOR ##
 
 # Generate holidays dataframe for Prophet
