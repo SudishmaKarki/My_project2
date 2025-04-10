@@ -134,7 +134,6 @@ def evaluate_sarimax_metrics(test_series, forecast_mean, test_peak, forecast_pea
 
     return metrics
 
-
 def rolling_forecast_sarimax(train_series, test_series, order, seasonal_order, peak_hours_dynamic, window_size=500, step=5, forecast_steps=1, max_points=50):
   
     test_series_small = test_series.iloc[:max_points]
@@ -362,6 +361,188 @@ def forecast_future_sarimax_model_refined(results_sarimax_best, periods=30*24):
     return forecast_df
 
 def future_forecast_by_hour_sarimax_refined(forecast_df, threshold_ratio=0.6):
+    hourly_avg = forecast_df.groupby('Hour')['yhat'].mean().round(2)
+    threshold = threshold_ratio * hourly_avg.max()
+    peak_hours = sorted([hour for hour, val in hourly_avg.items() if val >= threshold])
+    hourly_df = hourly_avg.reset_index(name='Avg Forecast (yhat)')
+    return hourly_df, threshold, peak_hours
+
+                                   #SARIMAX Exogenous Variables model refinement 
+
+#Exogenous Variable Preparation
+def create_exogenous_variables(train_df, test_df):
+    holiday_dummies_train = pd.get_dummies(train_df['Holiday'], prefix='Holiday', drop_first=False)
+    holiday_dummies_test = pd.get_dummies(test_df['Holiday'], prefix='Holiday', drop_first=False)
+
+    all_cols = holiday_dummies_train.columns.union(holiday_dummies_test.columns)
+    holiday_dummies_train = holiday_dummies_train.reindex(columns=all_cols, fill_value=0).astype(float)
+    holiday_dummies_test = holiday_dummies_test.reindex(columns=all_cols, fill_value=0).astype(float)
+
+    hour_train = train_df.index.hour.to_frame(name='hour')
+    hour_test = test_df.index.hour.to_frame(name='hour')
+
+    exog_train = pd.concat([hour_train, holiday_dummies_train], axis=1)
+    exog_test = pd.concat([hour_test, holiday_dummies_test], axis=1)
+
+    return exog_train, exog_test
+
+#Fit SARIMAX with Exogenous Variables
+def fit_sarimax_with_exog(train_series, exog_train, order=(1, 1, 1), seasonal_order=(1, 1, 1, 24), show_summary=True):
+    model_exog_full = SARIMAX(train_series, exog=exog_train, order=order, seasonal_order=seasonal_order)
+    results_exog_full = model_exog_full.fit(disp=False, maxiter=500, pgtol=1e-8, method='lbfgs', cov_type='robust')
+    if show_summary:
+        print(results_exog_full.summary())
+    return results_exog_full
+
+
+#Ljung-Box Test
+def ljung_box_test_refined_sarimax(results_exog_full):
+    lb_test = acorr_ljungbox(results_exog_full.dropna(), lags=[10], return_df=True)
+    print("Ljung-Box test results for refined model residuals:")
+    print(lb_test)
+    return lb_test
+
+#Investigate Largest Residual (Refined SARIMAX)
+def analyze_largest_residual_sarimax_exog(residuals_exog, original_df):
+    largest_residual_timestamp_exog = residuals_exog.abs().idxmax()
+    largest_residual_value_exog = residuals_exog.loc[largest_residual_timestamp_exog]
+    
+    print("Largest residual at:", largest_residual_timestamp_exog, 
+          "with value:", largest_residual_value_exog)
+    print("Data at that timestamp:")
+    print(original_df.loc[largest_residual_timestamp_exog])
+    
+    return largest_residual_timestamp_exog, largest_residual_value_exog
+
+#Test set forcasting
+def forecast_with_exog(results, exog_test, test_index):
+    forecast_obj_exog_full = results.get_forecast(steps=len(exog_test), exog=exog_test)
+    forecast_mean_exog_full = forecast_obj_exog_full.predicted_mean
+    forecast_ci = forecast_obj_exog_full.conf_int()
+    forecast_mean_exog_full.index = test_index
+    forecast_ci.index = test_index
+    return forecast_mean_exog_full, forecast_ci
+
+#Identify Peak Hours from Forecast
+def analyze_peak_hours_exog(forecast_mean_exog_full, test_series, threshold_ratio=0.6):
+    forecast_df = forecast_mean_exog_full.to_frame(name='yhat')
+    forecast_df['Hour'] = forecast_df.index.hour
+
+    test_df = test_series.to_frame(name='y')
+    test_df['Hour'] = test_df.index.hour
+
+    hourly_avg_forecast = forecast_df.groupby('Hour')['yhat'].mean()
+    threshold = threshold_ratio * hourly_avg_forecast.max()
+
+    peak_hours = sorted([hour for hour, avg in hourly_avg_forecast.items() if avg >= threshold])
+
+    forecast_peak = forecast_df[forecast_df['Hour'].isin(peak_hours)]
+    test_peak = test_df[test_df['Hour'].isin(peak_hours)]
+
+    return peak_hours, threshold, hourly_avg_forecast, forecast_peak, test_peak
+
+#Evaluate Refined Model Metrics
+def evaluate_sarimax_exog_metrics(test_series, forecast_mean_exog_full, test_peak, forecast_peak, epsilon=1e-6):
+    # --- Overall Metrics ---
+    mae_exog  = mean_absolute_error(test_series, forecast_mean_exog_full)
+    rmse_exog = np.sqrt(mean_squared_error(test_series, forecast_mean_exog_full))
+    mape_exog = np.mean(np.abs((test_series - forecast_mean_exog_full) / test_series)) * 100
+
+    mape_mod = np.mean(np.abs((test_series - forecast_mean_exog_full) / (np.abs(test_series) + epsilon))) * 100
+    smape = 100 * np.mean(2 * np.abs(forecast_mean_exog_full - test_series) / (np.abs(test_series) + np.abs(forecast_mean_exog_full)))
+
+    # --- Peak Hour Metrics ---
+    mae_peak = mean_absolute_error(test_peak['y'], forecast_peak['yhat'])
+    rmse_peak = np.sqrt(mean_squared_error(test_peak['y'], forecast_peak['yhat']))
+    mape_peak = mean_absolute_percentage_error(test_peak['y'], forecast_peak['yhat'])
+
+    # --- Compile into DataFrame ---
+    metrics_data = [
+        ["MAE", "Overall", mae_exog],
+        ["RMSE", "Overall", rmse_exog],
+        ["MAPE", "Overall", mape_exog],
+        ["Modified MAPE", "Overall", mape_mod],
+        ["SMAPE", "Overall", smape],
+        ["MAE", "Peak Hours", mae_peak],
+        ["RMSE", "Peak Hours", rmse_peak],
+        ["MAPE", "Peak Hours", mape_peak]
+    ]
+
+    metrics_df = pd.DataFrame(metrics_data, columns=["Metric", "Type", "Value"])
+
+    return metrics_df.style.set_caption("📊 Refined SARIMAX (Exog): Evaluation Metrics").background_gradient(cmap='Blues', subset=["Value"])
+
+# Rolling forcast with refined exog
+def rolling_forecast_sarimax_exog(train_series, test_series, exog_train, exog_test, best_order, best_seasonal_order, peak_hours, window_size=500, step=5, forecast_steps=1, max_points=50):
+    test_series_small = test_series.iloc[:max_points]
+    exog_test_small = exog_test.loc[test_series_small.index]
+    
+    data = pd.concat([train_series, test_series_small])
+    exog_full = pd.concat([exog_train, exog_test_small])
+
+    rolling_forecasts_overall = []
+    rolling_actuals_overall = []
+    rolling_forecasts_peak = []
+    rolling_actuals_peak = []
+
+    for i in range(0, len(test_series_small), step):
+        train_window = data.iloc[i : i + window_size]
+        exog_window = exog_full.iloc[i : i + window_size]
+        exog_forecast = exog_test_small.iloc[i : i + forecast_steps]
+
+        model = SARIMAX(train_window,
+                        exog=exog_window,
+                        order=best_order,
+                        seasonal_order=best_seasonal_order,
+                        enforce_stationarity=False,
+                        enforce_invertibility=False)
+        results = model.fit(disp=False)
+
+        forecast = results.forecast(steps=forecast_steps, exog=exog_forecast)
+        forecast_value = forecast.iloc[0]
+        forecast_time = test_series_small.index[i]
+
+        rolling_forecasts_overall.append(forecast_value)
+        rolling_actuals_overall.append(test_series_small.iloc[i])
+
+        if forecast_time.hour in peak_hours:
+            rolling_forecasts_peak.append(forecast_value)
+            rolling_actuals_peak.append(test_series_small.iloc[i])
+
+    processed_indices = test_series_small.index[::step]
+    rolling_forecasts_overall = pd.Series(rolling_forecasts_overall, index=processed_indices)
+    rolling_actuals_overall = pd.Series(rolling_actuals_overall, index=processed_indices)
+
+    peak_index = [ts for ts in processed_indices if ts.hour in peak_hours]
+    rolling_forecasts_peak = pd.Series(rolling_forecasts_peak, index=peak_index)
+    rolling_actuals_peak = pd.Series(rolling_actuals_peak, index=peak_index)
+
+    overall_metrics = {
+        'MAE': mean_absolute_error(rolling_actuals_overall, rolling_forecasts_overall),
+        'RMSE': np.sqrt(mean_squared_error(rolling_actuals_overall, rolling_forecasts_overall)),
+        'MAPE': mean_absolute_percentage_error(rolling_actuals_overall, rolling_forecasts_overall)
+    }
+
+    peak_metrics = {'MAE': None, 'RMSE': None, 'MAPE': None}
+    if len(rolling_forecasts_peak) > 0:
+        peak_metrics = {
+            'MAE': mean_absolute_error(rolling_actuals_peak, rolling_forecasts_peak),
+            'RMSE': np.sqrt(mean_squared_error(rolling_actuals_peak, rolling_forecasts_peak)),
+            'MAPE': mean_absolute_percentage_error(rolling_actuals_peak, rolling_forecasts_peak)
+        }
+
+    return overall_metrics, peak_metrics, rolling_forecasts_overall, rolling_actuals_overall, rolling_forecasts_peak, rolling_actuals_peak
+
+#Generating a 30-day future forecast
+def generate_future_forecast_sarimax_exog(results_exog_full, periods=30*24):
+    forecast = results_exog_full.get_forecast(steps=periods)
+    forecast_df = forecast.predicted_mean.to_frame(name='yhat')
+    forecast_df['ds'] = forecast_df.index
+    forecast_df['Hour'] = forecast_df['ds'].dt.hour
+    return forecast_df
+
+#Grouping forecast by hour
+def group_forecast_by_hour_sarimax_exog(forecast_df, threshold_ratio=0.6):
     hourly_avg = forecast_df.groupby('Hour')['yhat'].mean().round(2)
     threshold = threshold_ratio * hourly_avg.max()
     peak_hours = sorted([hour for hour, val in hourly_avg.items() if val >= threshold])
