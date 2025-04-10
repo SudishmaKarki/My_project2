@@ -21,6 +21,7 @@ import scipy.stats as stats
 from statsmodels.tsa.stattools import adfuller
 from statsmodels.graphics.tsaplots import plot_acf, plot_pacf
 from statsmodels.stats.diagnostic import acorr_ljungbox
+import gc 
 
                          ##BASELINE MODEL SARIMAX##
 
@@ -201,56 +202,54 @@ def group_forecast_by_hour(forecast_df, threshold_ratio=0.6):
 
                                   #SARIMAX Grid search for model refinement 1
 def sarimax_grid_search(train_series):
-    # Define candidate ranges for non-seasonal parameters
-    p = d = q = range(0, 2)
-    pdq = list(itertools.product(p, d, q))
-
-    # Define candidate ranges for seasonal parameters; s is fixed at 24 for hourly data with daily seasonality
-    P = D = Q = range(0, 2)
-    seasonal_pdq = list(itertools.product(P, D, Q, [24]))
+    pdq = [(1, 0, 0), (1, 1, 0), (1, 1, 1)]               
+    seasonal_pdq = [(1, 0, 0, 24), (1, 1, 0, 24), (1, 1, 1, 24)]  
 
     results_list = []
 
-    print("Starting SARIMAX grid search...")
-    for param in pdq:
-        for seasonal_param in seasonal_pdq:
+    print("Starting SARIMAX Grid Search...")
+    for order in pdq:
+        for seasonal_order in seasonal_pdq:
             try:
                 model = SARIMAX(train_series,
-                                order=param,
-                                seasonal_order=seasonal_param,
+                                order=order,
+                                seasonal_order=seasonal_order,
                                 enforce_stationarity=False,
                                 enforce_invertibility=False)
-                results = model.fit(disp=False, maxiter=1000, pgtol=1e-6)
+                results = model.fit(disp=False, maxiter=200)
                 results_list.append({
-                    'order': param,
-                    'seasonal_order': seasonal_param,
+                    'order': order,
+                    'seasonal_order': seasonal_order,
                     'AIC': results.aic,
                     'BIC': results.bic
                 })
-                print(f"SARIMAX{param}x{seasonal_param} - AIC: {results.aic:.2f}, BIC: {results.bic:.2f}")
+                print(f"SARIMAX{order}x{seasonal_order} - AIC: {results.aic:.2f}, BIC: {results.bic:.2f}")
+                del model, results 
+                gc.collect()
             except Exception as e:
-                print(f"SARIMAX{param}x{seasonal_param} failed: {e}")
+                print(f"SARIMAX{order}x{seasonal_order} failed: {e}")
                 continue
 
     results_df = pd.DataFrame(results_list)
     best_params = results_df.loc[results_df['AIC'].idxmin()]
 
-    print("\nBest SARIMAX Parameters based on AIC:")
+    print("\nBest SARIMAX Parameters Based on AIC:")
     print(best_params)
 
     return results_df, best_params
 
 def retrain_sarimax_model(train_series, best_order, best_seasonal_order):
-    model = SARIMAX(
+    model_sarimax_best = SARIMAX(
         train_series,
         order=best_order,
         seasonal_order=best_seasonal_order,
         enforce_stationarity=False,
         enforce_invertibility=False
     )
-    results = model.fit(disp=False)
-    print(results.summary())
-    return results
+    results_sarimax_best = model_sarimax_best.fit(disp=False)
+    print(results_sarimax_best.summary())
+    return results_sarimax_best
+
 
 def ljung_box_test_residuals(residuals_refined, lags=[10]):
     lb_test_results = acorr_ljungbox(residuals_refined.dropna(), lags=lags, return_df=True)
