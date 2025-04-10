@@ -185,3 +185,17 @@ def rolling_forecast_sarimax(train_series, test_series, order, seasonal_order, p
 
     return overall_metrics, peak_metrics, rolling_forecasts_overall, rolling_actuals_overall, rolling_forecasts_peak, rolling_actuals_peak
 
+def generate_future_forecast_sarimax(results, periods=30*24):
+    forecast = results.get_forecast(steps=periods)
+    forecast_df = forecast.predicted_mean.to_frame(name='yhat')
+    forecast_df['ds'] = forecast_df.index
+    forecast_df['Hour'] = forecast_df['ds'].dt.hour
+    return forecast_df
+
+def group_forecast_by_hour(forecast_df, threshold_ratio=0.6):
+    hourly_avg = forecast_df.groupby('Hour')['yhat'].mean().round(2)
+    threshold = threshold_ratio * hourly_avg.max()
+    peak_hours = sorted([hour for hour, val in hourly_avg.items() if val >= threshold])
+    hourly_df = hourly_avg.reset_index(name='Avg Forecast (yhat)')
+    return hourly_df, threshold, peak_hours
+
