@@ -60,17 +60,6 @@ def preprocess_data(df):
     
     return df_full
 
-# For testing purposes
-if __name__ == '__main__':
-    df = load_data()
-    df_full = preprocess_data(df)
-
-  # Print the final DataFrame preview if data was successfully loaded
-    if df_full is not None:
-        print("\nFinal DataFrame Preview:")
-        print(df_full.head())
-
-
 def split_train_test(df, split_date='2022-01-01'):
     restaurant_train = df.loc[df.index < split_date].copy()
     restaurant_test = df.loc[df.index >= split_date].copy()
@@ -83,3 +72,15 @@ def generate_time_series_splits(df, n_splits=5):
     tss = TimeSeriesSplit(n_splits=n_splits)
     for train_idx, test_idx in tss.split(df):
         yield df.iloc[train_idx], df.iloc[test_idx]
+
+'''# For testing purposes
+if __name__ == '__main__':
+    df = load_data()
+    df_full = preprocess_data(df)
+    '''
+
+''' # Print the final DataFrame preview if data was successfully loaded
+    if df_full is not None:
+        print("\nFinal DataFrame Preview:")
+        print(df_full.head())
+'''

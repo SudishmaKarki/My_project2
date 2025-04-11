@@ -487,7 +487,7 @@ def evaluate_sarimax_exog_metrics(test_series, forecast_mean_exog_full, test_pea
 
     metrics_df = pd.DataFrame(metrics_data, columns=["Metric", "Type", "Value"])
 
-    return metrics_df.style.set_caption("📊 Refined SARIMAX (Exog): Evaluation Metrics").background_gradient(cmap='Blues', subset=["Value"])
+    return metrics_df.style.set_caption(" Refined SARIMAX (Exog): Evaluation Metrics").background_gradient(cmap='Blues', subset=["Value"])
 
 # Rolling forcast with refined exog
 def rolling_forecast_sarimax_exog(train_series, test_series, exog_train, exog_test, best_order, best_seasonal_order, peak_hours, window_size=500, step=5, forecast_steps=1, max_points=50):
