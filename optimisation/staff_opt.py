@@ -50,7 +50,8 @@ np.random.seed(42)
 
 # 1. Load and preprocess data 
 # --- 1. Load raw CSV data ---
-df_raw = load_data(filepath='../data/RestaurantData.csv')
+#df_raw = load_data(filepath='../data/RestaurantData.csv')
+df_raw = load_data(filepath='data/RestaurantData.csv')
 df_full = preprocess_data(df_raw)
 restaurant_train, restaurant_test = split_train_test(df_full)
 
