@@ -360,7 +360,7 @@ def cross_validate_model_r2( m_best_r2, initial='730 days', period='180 days', h
     df_p_r2 = performance_metrics(df_cv_r2)
     return df_cv_r2, df_p_r2
 
-def forecast_future_with_model_r2(m_best_r2, days=30, freq='H', threshold_ratio=0.6):
+def forecast_future_with_model_r2(m_best_r2, days=30, freq='h', threshold_ratio=0.6):
     future_r2 = m_best_r2.make_future_dataframe(periods=days * 24, freq=freq)
     future_r2['hour'] = future_r2['ds'].dt.hour
 
