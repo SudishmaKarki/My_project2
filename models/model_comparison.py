@@ -24,17 +24,3 @@ from statsmodels.stats.diagnostic import acorr_ljungbox
 import gc 
 
 
-def compare_model_metrics(metrics_dict, model_names):
-    """
-    Compare forecast metrics for multiple models.
-    """
-    import pandas as pd
-
-    comparison_data = []
-    for model, metrics in zip(model_names, metrics_dict):
-        for metric_type, values in metrics.items():
-            for metric_name, value in values.items():
-                comparison_data.append([model, metric_type, metric_name, round(value, 2)])
-    
-    df = pd.DataFrame(comparison_data, columns=["Model", "Type", "Metric", "Value"])
-    return df
