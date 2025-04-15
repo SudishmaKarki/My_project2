@@ -370,22 +370,6 @@ def future_forecast_by_hour_sarimax_refined(forecast_df, threshold_ratio=0.6):
                                    #SARIMAX Exogenous Variables model refinement 
 
 #Exogenous Variable Preparation
-'''def create_exogenous_variables(train_df, test_df):
-    holiday_dummies_train = pd.get_dummies(train_df['Holiday'], prefix='Holiday', drop_first=False)
-    holiday_dummies_test = pd.get_dummies(test_df['Holiday'], prefix='Holiday', drop_first=False)
-
-    all_cols = holiday_dummies_train.columns.union(holiday_dummies_test.columns)
-    holiday_dummies_train = holiday_dummies_train.reindex(columns=all_cols, fill_value=0).astype(float)
-    holiday_dummies_test = holiday_dummies_test.reindex(columns=all_cols, fill_value=0).astype(float)
-
-    hour_train = train_df.index.hour.to_frame(name='hour')
-    hour_test = test_df.index.hour.to_frame(name='hour')
-
-    exog_train = pd.concat([hour_train, holiday_dummies_train], axis=1)
-    exog_test = pd.concat([hour_test, holiday_dummies_test], axis=1)
-
-    return exog_train, exog_test'''
-
 def create_exogenous_variables(train_df, test_df):
     holiday_dummies_train = pd.get_dummies(train_df['Holiday'], prefix='Holiday', drop_first=False)
     holiday_dummies_test = pd.get_dummies(test_df['Holiday'], prefix='Holiday', drop_first=False)
@@ -484,36 +468,71 @@ def evaluate_sarimax_exog_metrics(test_series, forecast_mean_exog_full, test_pea
         ["RMSE", "Peak Hours", rmse_peak],
         ["MAPE", "Peak Hours", mape_peak]
     ]
-
     metrics_df = pd.DataFrame(metrics_data, columns=["Metric", "Type", "Value"])
-
-    return metrics_df.style.set_caption(" Refined SARIMAX (Exog): Evaluation Metrics").background_gradient(cmap='Blues', subset=["Value"])
+    metrics_df["Value"] = pd.to_numeric(metrics_df["Value"], errors='coerce')  # Ensure numeric
+    metrics_df = metrics_df.replace([np.inf, -np.inf], np.nan)  # Replace infs
+    metrics_df = metrics_df.fillna(0)  # ✅ Fill missing with 0 to avoid styling errors
+    
+    return metrics_df.style.set_caption("Refined SARIMAX (Exog): Evaluation Metrics")\
+    .background_gradient(cmap='Blues', subset=["Value"])
 
 # Rolling forcast with refined exog
-def rolling_forecast_sarimax_exog(train_series, test_series, exog_train, exog_test, best_order, best_seasonal_order, peak_hours, window_size=500, step=5, forecast_steps=1, max_points=50):
+def rolling_forecast_sarimax_exog(
+    train_series,
+    test_series,
+    exog_train,
+    exog_test,
+    best_order,
+    best_seasonal_order,
+    peak_hours,
+    window_size=500,
+    step=5,
+    forecast_steps=1,
+    max_points=50
+):
+    from sklearn.metrics import mean_absolute_error, mean_squared_error, mean_absolute_percentage_error
+    import numpy as np
+    import pandas as pd
+    from statsmodels.tsa.statespace.sarimax import SARIMAX
+
+    # Trim test set for faster rolling
     test_series_small = test_series.iloc[:max_points]
     exog_test_small = exog_test.loc[test_series_small.index]
     
+    # Combine data for rolling window
     data = pd.concat([train_series, test_series_small])
     exog_full = pd.concat([exog_train, exog_test_small])
 
+    # Initialize results
     rolling_forecasts_overall = []
     rolling_actuals_overall = []
     rolling_forecasts_peak = []
     rolling_actuals_peak = []
 
+    convergence_issues = 0
+    failed_iterations = []
+
+    # Rolling forecast loop
     for i in range(0, len(test_series_small), step):
         train_window = data.iloc[i : i + window_size]
         exog_window = exog_full.iloc[i : i + window_size]
         exog_forecast = exog_test_small.iloc[i : i + forecast_steps]
 
-        model = SARIMAX(train_window,
-                        exog=exog_window,
-                        order=best_order,
-                        seasonal_order=best_seasonal_order,
-                        enforce_stationarity=False,
-                        enforce_invertibility=False)
-        results = model.fit(disp=False)
+        model = SARIMAX(
+            train_window,
+            exog=exog_window,
+            order=best_order,
+            seasonal_order=best_seasonal_order,
+            enforce_stationarity=False,
+            enforce_invertibility=False
+        )
+
+        results = model.fit(disp=False, method='lbfgs', maxiter=2000)
+
+        if not results.mle_retvals.get('converged', True):
+            print(f"⚠️ Model failed to converge at iteration {i}")
+            convergence_issues += 1
+            failed_iterations.append(i)
 
         forecast = results.forecast(steps=forecast_steps, exog=exog_forecast)
         forecast_value = forecast.iloc[0]
@@ -526,6 +545,7 @@ def rolling_forecast_sarimax_exog(train_series, test_series, exog_train, exog_te
             rolling_forecasts_peak.append(forecast_value)
             rolling_actuals_peak.append(test_series_small.iloc[i])
 
+    # Format output
     processed_indices = test_series_small.index[::step]
     rolling_forecasts_overall = pd.Series(rolling_forecasts_overall, index=processed_indices)
     rolling_actuals_overall = pd.Series(rolling_actuals_overall, index=processed_indices)
@@ -534,6 +554,7 @@ def rolling_forecast_sarimax_exog(train_series, test_series, exog_train, exog_te
     rolling_forecasts_peak = pd.Series(rolling_forecasts_peak, index=peak_index)
     rolling_actuals_peak = pd.Series(rolling_actuals_peak, index=peak_index)
 
+    # Metrics
     overall_metrics = {
         'MAE': mean_absolute_error(rolling_actuals_overall, rolling_forecasts_overall),
         'RMSE': np.sqrt(mean_squared_error(rolling_actuals_overall, rolling_forecasts_overall)),
@@ -548,15 +569,46 @@ def rolling_forecast_sarimax_exog(train_series, test_series, exog_train, exog_te
             'MAPE': mean_absolute_percentage_error(rolling_actuals_peak, rolling_forecasts_peak)
         }
 
+    # Final report
+    print(f"\n✅ Rolling forecast completed.")
+    print(f"⚠️ Total convergence failures: {convergence_issues}/{len(test_series_small[::step])}")
+    if convergence_issues > 0:
+        print(f"🔁 Failed at iterations: {failed_iterations}")
+
     return overall_metrics, peak_metrics, rolling_forecasts_overall, rolling_actuals_overall, rolling_forecasts_peak, rolling_actuals_peak
 
+
+def create_future_exog(df, periods=30*24):
+   
+    # 1. Create future timestamps
+    last_timestamp = df.index.max()
+    future_dates = pd.date_range(start=last_timestamp + pd.Timedelta(hours=1), periods=periods, freq='h')
+    future_df = pd.DataFrame(index=future_dates)
+    future_df.index.name = 'ds'
+
+    # 2. Extract hour
+    future_df['hour'] = future_df.index.hour
+
+    # 3. Generate UK holiday names
+    uk_holidays = holidays.UnitedKingdom(years=range(future_df.index.min().year, future_df.index.max().year + 1))
+    future_df['Holiday'] = future_df.index.date
+    future_df['Holiday'] = future_df['Holiday'].apply(lambda date: uk_holidays.get(date, 'None'))
+
+    # 4. One-hot encode holiday names to match training exog
+    holiday_dummies = pd.get_dummies(future_df['Holiday'], prefix='Holiday', drop_first=False).astype(float)
+
+    # 5. Final exog
+    future_exog = pd.concat([future_df[['hour']], holiday_dummies], axis=1)
+
+    return future_exog
+
 #Generating a 30-day future forecast
-def generate_future_forecast_sarimax_exog(results_exog_full, periods=30*24):
-    forecast = results_exog_full.get_forecast(steps=periods)
+def generate_future_forecast_sarimax_exog(results_exog_full, future_exog, periods=30*24):
+    forecast = results_exog_full.get_forecast(steps=periods, exog=future_exog)
     forecast_df = forecast.predicted_mean.to_frame(name='yhat')
     forecast_df['ds'] = forecast_df.index
-    forecast_df['Hour'] = forecast_df['ds'].dt.hour
     return forecast_df
+
 
 #Grouping forecast by hour
 def group_forecast_by_hour_sarimax_exog(forecast_df, threshold_ratio=0.6):
